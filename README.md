@@ -56,3 +56,7 @@ python -m src.models.train_bundle --data hourly.csv --station MH020 --features a
 Input requires contiguous hourly UTC `timestamp`, `node_id`, `aqi` and listed features. This compares LSTM and ARIMA on identical held-out target windows, fits scaling on training data only, and writes station-scoped inference bundles and `comparison.json`. Existing `/api/v1/predict` routes support these bundles, explicit historical `as_of`, or labelled `demo=true` output. Synthetic bundles are not exposed as observed-data forecasts. Never load model pickle files from untrusted sources.
 
 Author: Rayan. Project history remains in Git.
+
+## License
+
+Original project code and documentation are licensed under the [MIT License](LICENSE). Third-party data, API responses, dependencies and assets retain their own terms and attribution.

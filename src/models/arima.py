@@ -86,7 +86,11 @@ class ARIMAModel:
         if not self.fitted:
             raise ValueError("Model not fitted. Call fit() first.")
             
-        return self.model.predict(n_periods=horizon)
+        if horizon < 1:
+            raise ValueError("horizon must be positive")
+        if hasattr(self.model, "forecast"):
+            return np.asarray(self.model.forecast(steps=horizon))
+        return np.asarray(self.model.predict(n_periods=horizon))
     
     def save(self, path: str) -> None:
         """Save model to disk."""

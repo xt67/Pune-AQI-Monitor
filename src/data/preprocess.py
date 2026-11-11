@@ -187,8 +187,8 @@ def _clean_single_node(
         # Step 1: Forward-fill short gaps
         df[col] = df[col].ffill(limit=gap_fill_limit)
         
-        # Step 2: Linear interpolation for medium gaps
-        df[col] = df[col].interpolate(method="linear", limit=interpolate_limit - gap_fill_limit)
+        # Do not interpolate using future observations across evaluation boundaries.
+        # Longer gaps remain missing; callers explicitly decide how to handle them.
         
         remaining_nan = df[col].isna().sum()
         filled = original_nan - remaining_nan
@@ -509,19 +509,20 @@ def create_train_val_test_split(
     Returns:
         Dictionary with split indices and DataFrames
     """
-    n = len(df)
-    train_end = int(n * train_ratio)
-    val_end = int(n * (train_ratio + val_ratio))
-    
-    splits = {
-        "train_indices": list(range(0, train_end)),
-        "val_indices": list(range(train_end, val_end)),
-        "test_indices": list(range(val_end, n)),
-        "train_df": df.iloc[:train_end].copy(),
-        "val_df": df.iloc[train_end:val_end].copy(),
-        "test_df": df.iloc[val_end:].copy(),
-    }
-    
+    if min(train_ratio, val_ratio, test_ratio) <= 0 or not np.isclose(train_ratio + val_ratio + test_ratio, 1):
+        raise ValueError("Split ratios must be positive and sum to one")
+    times = pd.to_datetime(df["timestamp"], utc=True, errors="raise")
+    unique = np.sort(times.unique())
+    a, b = int(len(unique) * train_ratio), int(len(unique) * (train_ratio + val_ratio))
+    if a == 0 or b <= a or b >= len(unique):
+        raise ValueError("Not enough distinct timestamps for three splits")
+    masks = {"train": times < unique[a], "val": (times >= unique[a]) & (times < unique[b]), "test": times >= unique[b]}
+    splits = {}
+    for name, mask in masks.items():
+        indices = np.flatnonzero(mask).tolist()
+        splits[name + "_indices"] = indices
+        splits[name + "_df"] = df.iloc[indices].sort_values("timestamp").copy()
+
     logger.info(f"Split sizes - Train: {len(splits['train_df'])}, "
                 f"Val: {len(splits['val_df'])}, Test: {len(splits['test_df'])}")
     
@@ -563,7 +564,7 @@ def preprocess_pipeline(
     logger.info(f"After cleaning: {len(df)} rows")
     
     # Step 2: Clip outliers
-    df = clip_outliers(df)
+    # Do not fit distribution-dependent clipping on held-out future values.
     
     # Step 3: Compute AQI if not present
     if "aqi" not in df.columns:
@@ -605,4 +606,6 @@ def preprocess_pipeline(
     df.to_parquet(output_parquet, index=False)
     logger.info(f"Saved processed data to {output_parquet}")
     
+    for name in ("train", "val", "test"):
+        splits[name + "_df"] = df.iloc[splits[name + "_indices"]].sort_values("timestamp").copy()
     return df, splits

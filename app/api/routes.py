@@ -1,5 +1,5 @@
 """API routes for AQI prediction service."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -16,6 +16,31 @@ from app.api.models import (
 )
 
 router = APIRouter()
+from src.data.live_api import live_service, LOCATIONS, LiveDataUnavailable
+
+
+@router.get("/locations", tags=["Live forecasts"])
+async def live_locations():
+    return [{"id":key, "name":value[0], "latitude":value[1], "longitude":value[2]} for key,value in LOCATIONS.items()]
+
+
+@router.get("/forecast/{location}", tags=["Live forecasts"])
+async def live_forecast(location: str, hours: int = Query(default=24, ge=1, le=72)):
+    from starlette.concurrency import run_in_threadpool
+    if location not in LOCATIONS:
+        raise HTTPException(404, "Unknown Pune location")
+    try:
+        return await run_in_threadpool(live_service.forecast, location, hours)
+    except LiveDataUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+_forecaster = None
+
+def set_forecaster(forecaster):
+    global _forecaster
+    _forecaster = forecaster
+
 
 # Pune stations data
 STATIONS = {
@@ -65,12 +90,12 @@ def get_models():
 @router.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
     """Check API health and model status."""
-    models_loaded = _models["lstm"] is not None or _models["arima"] is not None
+    models_loaded = bool(_forecaster and _forecaster.bundles)
     return HealthResponse(
         status="healthy",
         version="1.0.0",
         models_loaded=models_loaded,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     )
 
 
@@ -111,22 +136,32 @@ async def predict_aqi(request: PredictionRequest):
             detail=f"Invalid model_type: {request.model_type}. Use 'lstm' or 'arima'",
         )
     
-    # Generate predictions
+    if not request.demo:
+        if _forecaster is None:
+            raise HTTPException(503, "No inference bundles configured")
+        try:
+            from starlette.concurrency import run_in_threadpool
+            result = await run_in_threadpool(_forecaster.predict, request.station_id,
+                                            request.model_type, request.horizon, request.as_of)
+        except (ValueError, FileNotFoundError, KeyError) as exc:
+            raise HTTPException(503, str(exc)) from exc
+        predictions = []
+        for step, value in enumerate(result["values"], start=1):
+            value = round(float(value), 1)
+            category, color = get_aqi_category(value)
+            predictions.append(HourlyPrediction(hour=step,
+                timestamp=result["origin"] + timedelta(hours=step), aqi=value, category=category, color=color))
+        return PredictionResponse(station_id=request.station_id, model_type=request.model_type,
+            horizon=request.horizon, predictions=predictions, data_source="model",
+            warning="Forecast from observed station history; model estimates are not measurements.",
+            forecast_origin=result["origin"], current_aqi=result["current_aqi"], mae=result["mae"])
+
+    # Generate explicitly requested demonstration data.
     predictions = []
-    base_time = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
+    base_time = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     
-    # Use model if loaded, otherwise generate mock predictions
-    model = _models.get(request.model_type)
-    
-    if model is not None:
-        # TODO: Implement actual model inference
-        # For now, generate reasonable mock data
-        import random
-        base_aqi = random.uniform(80, 150)
-    else:
-        # Mock prediction when model not loaded
-        import random
-        base_aqi = random.uniform(80, 150)
+    import random
+    base_aqi = random.uniform(80, 150)
     
     for hour in range(request.horizon):
         # Simulate daily pattern (higher AQI in morning/evening rush hours)
@@ -141,8 +176,8 @@ async def predict_aqi(request: PredictionRequest):
         
         predictions.append(
             HourlyPrediction(
-                hour=hour,
-                timestamp=base_time + timedelta(hours=hour),
+                hour=hour + 1,
+                timestamp=base_time + timedelta(hours=hour + 1),
                 aqi=round(aqi, 1),
                 category=category,
                 color=color,
@@ -153,10 +188,10 @@ async def predict_aqi(request: PredictionRequest):
         station_id=request.station_id,
         model_type=request.model_type,
         horizon=request.horizon,
-        generated_at=datetime.utcnow(),
+        generated_at=datetime.now(timezone.utc),
         predictions=predictions,
-        current_aqi=round(predictions[0].aqi, 1) if predictions else None,
-        mae=_model_metrics.get(request.model_type, {}).get("mae"),
+        current_aqi=None,
+        mae=None,
     )
 
 
@@ -165,11 +200,15 @@ async def predict_aqi_get(
     station_id: str,
     model_type: str = Query(default="lstm", description="Model type: 'lstm' or 'arima'"),
     horizon: int = Query(default=24, ge=1, le=72, description="Forecast horizon in hours"),
+    demo: bool = Query(default=False, description="Request simulated demonstration data"),
+    as_of: Optional[datetime] = None,
 ):
     """Generate AQI predictions (GET endpoint for convenience)."""
     request = PredictionRequest(
         station_id=station_id,
         model_type=model_type,
         horizon=horizon,
+        demo=demo,
+        as_of=as_of,
     )
     return await predict_aqi(request)

@@ -93,20 +93,20 @@ class TestPredictEndpoint:
         """POST predict returns 200."""
         response = client.post(
             "/api/v1/predict",
-            json={"station_id": "MH020", "model_type": "lstm", "horizon": 24}
+            json={"demo": True, "station_id": "MH020", "model_type": "lstm", "horizon": 24}
         )
         assert response.status_code == 200
     
     def test_predict_get_returns_200(self):
         """GET predict returns 200."""
-        response = client.get("/api/v1/predict/MH020?model_type=lstm&horizon=24")
+        response = client.get("/api/v1/predict/MH020?model_type=lstm&horizon=24&demo=true")
         assert response.status_code == 200
     
     def test_predict_returns_predictions_array(self):
         """Predict returns array of predictions."""
         response = client.post(
             "/api/v1/predict",
-            json={"station_id": "MH020", "horizon": 12}
+            json={"demo": True, "station_id": "MH020", "horizon": 12}
         )
         data = response.json()
         assert "predictions" in data
@@ -116,7 +116,7 @@ class TestPredictEndpoint:
         """Prediction response has required fields."""
         response = client.post(
             "/api/v1/predict",
-            json={"station_id": "MH020"}
+            json={"demo": True, "station_id": "MH020"}
         )
         data = response.json()
         assert "station_id" in data
@@ -129,7 +129,7 @@ class TestPredictEndpoint:
         """Each hourly prediction has required fields."""
         response = client.post(
             "/api/v1/predict",
-            json={"station_id": "MH020", "horizon": 6}
+            json={"demo": True, "station_id": "MH020", "horizon": 6}
         )
         data = response.json()
         for pred in data["predictions"]:
@@ -143,7 +143,7 @@ class TestPredictEndpoint:
         """Invalid station returns 404."""
         response = client.post(
             "/api/v1/predict",
-            json={"station_id": "INVALID"}
+            json={"demo": True, "station_id": "INVALID"}
         )
         assert response.status_code == 404
     
@@ -151,7 +151,7 @@ class TestPredictEndpoint:
         """Invalid model type returns 400."""
         response = client.post(
             "/api/v1/predict",
-            json={"station_id": "MH020", "model_type": "invalid"}
+            json={"demo": True, "station_id": "MH020", "model_type": "invalid"}
         )
         assert response.status_code == 400
     
@@ -159,7 +159,7 @@ class TestPredictEndpoint:
         """ARIMA model prediction works."""
         response = client.post(
             "/api/v1/predict",
-            json={"station_id": "MH020", "model_type": "arima"}
+            json={"demo": True, "station_id": "MH020", "model_type": "arima"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -170,7 +170,7 @@ class TestPredictEndpoint:
         for horizon in [6, 12, 24, 48, 72]:
             response = client.post(
                 "/api/v1/predict",
-                json={"station_id": "MH020", "horizon": horizon}
+                json={"demo": True, "station_id": "MH020", "horizon": horizon}
             )
             data = response.json()
             assert len(data["predictions"]) == horizon
@@ -179,8 +179,32 @@ class TestPredictEndpoint:
         """AQI values are within valid range."""
         response = client.post(
             "/api/v1/predict",
-            json={"station_id": "MH020", "horizon": 24}
+            json={"demo": True, "station_id": "MH020", "horizon": 24}
         )
         data = response.json()
         for pred in data["predictions"]:
             assert 0 <= pred["aqi"] <= 500
+
+
+@pytest.mark.parametrize("loaded", [False, True])
+def test_real_forecast_never_falls_back_to_random_data(monkeypatch, loaded):
+    from app.api import routes
+    monkeypatch.setitem(routes._models, "lstm", object() if loaded else None)
+    assert client.post("/api/v1/predict", json={"station_id": "MH020"}).status_code == 503
+    assert client.get("/api/v1/predict/MH020").status_code == 503
+
+
+def test_demo_reports_provenance_without_fake_accuracy_or_measurement():
+    response = client.post("/api/v1/predict", json={"station_id": "MH020", "demo": True})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data_source"] == "simulated"
+    assert "not a measured" in data["warning"]
+    assert data["mae"] is None
+    assert data["current_aqi"] is None
+
+
+@pytest.mark.parametrize("aqi,expected", [(50, "Good"), (50.5, "Satisfactory"), (100.5, "Moderate"), (200.5, "Poor"), (300.5, "Very Poor"), (400.5, "Severe")])
+def test_fractional_aqi_has_no_category_gaps(aqi, expected):
+    from app.api.models import get_aqi_category
+    assert get_aqi_category(aqi)[0] == expected

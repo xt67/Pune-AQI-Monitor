@@ -1,34 +1,27 @@
 """FastAPI main application."""
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import router, set_models
+from app.api.routes import router, set_forecaster
+from src.models.inference import BundleForecaster
 
 logger = logging.getLogger(__name__)
 
 # Application metadata
 APP_TITLE = "Pune Air Quality Sentinel API"
 APP_DESCRIPTION = """
-## AI-based Air Quality Forecaster for Urban Pollution Monitoring
+Live Pune air-quality and weather forecasts from Open-Meteo / CAMS, with bounded
+caching, freshness metadata and source attribution. Use `/api/v1/locations` and
+`/api/v1/forecast/{location}`. No API key or old training dataset is needed.
 
-This API provides AQI (Air Quality Index) predictions for Pune city monitoring stations
-using LSTM and ARIMA models trained on CPCB data.
-
-### Features
-- **24-72 hour forecasts** for multiple stations
-- **LSTM model** with temporal attention (MAE ~60)
-- **ARIMA baseline** for comparison (MAE ~87)
-- **Real-time inference** with model caching
-
-### Stations
-Currently monitoring 3 Pune stations:
-- MH020: Karve Road
-- MH021: Shivajinagar  
-- MH022: Hadapsar
+Provider AQI uses the US EPA scale, not Indian CPCB AQI. Forecasts are regional
+model estimates, not neighborhood sensor readings. The legacy `/predict` routes
+remain available for explicit demos and locally trained research bundles.
 """
 APP_VERSION = "1.0.0"
 
@@ -36,49 +29,14 @@ APP_VERSION = "1.0.0"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    # Startup: Load models
-    logger.info("Loading models...")
-    
-    lstm_model = None
-    arima_model = None
-    
-    # Try to load LSTM model
-    lstm_path = Path("models/lstm_best.pth")
-    if lstm_path.exists():
-        try:
-            import torch
-            from src.models.lstm import LSTMForecaster
-            
-            checkpoint = torch.load(lstm_path, map_location="cpu")
-            lstm_model = LSTMForecaster(input_size=9, horizon=24)
-            lstm_model.load_state_dict(checkpoint["model_state_dict"])
-            lstm_model.eval()
-            logger.info(f"LSTM model loaded from {lstm_path}")
-        except Exception as e:
-            logger.warning(f"Failed to load LSTM model: {e}")
-    
-    # Try to load ARIMA model
-    arima_path = Path("models/arima_MH020.pkl")
-    if arima_path.exists():
-        try:
-            import joblib
-            arima_model = joblib.load(arima_path)
-            logger.info(f"ARIMA model loaded from {arima_path}")
-        except Exception as e:
-            logger.warning(f"Failed to load ARIMA model: {e}")
-    
-    # Set models in routes
-    set_models(lstm_model, arima_model)
-    
-    if lstm_model is None and arima_model is None:
-        logger.warning("No models loaded - predictions will use mock data")
-    
-    logger.info("API startup complete")
-    
-    yield
-    
-    # Shutdown
-    logger.info("API shutdown")
+    directory = os.environ.get("PAQS_BUNDLE_DIR", str(Path(__file__).resolve().parents[2] / "models" / "bundles"))
+    service = BundleForecaster(directory)
+    set_forecaster(service)
+    logger.info("Available station/model bundles: %s", list(service.bundles))
+    try:
+        yield
+    finally:
+        set_forecaster(None)
 
 
 # Create FastAPI app

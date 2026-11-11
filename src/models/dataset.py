@@ -38,6 +38,8 @@ class AQIDataset(Dataset):
             timestamp_col: Timestamp column for sorting
         """
         self.window_size = window_size
+        if window_size < 1 or horizon < 1:
+            raise ValueError("window_size and horizon must be positive")
         self.horizon = horizon
         self.target_col = target_col
         
@@ -55,7 +57,13 @@ class AQIDataset(Dataset):
         
         for node_id in df[node_col].unique():
             node_df = df[df[node_col] == node_id].sort_values(timestamp_col).reset_index(drop=True)
-            self._build_node_windows(node_df)
+            times = pd.to_datetime(node_df[timestamp_col], utc=True)
+            if times.duplicated().any():
+                raise ValueError("Duplicate timestamps within a station")
+            # Windows must not bridge missing hours or cross station boundaries.
+            node_df["_window_segment"] = times.diff().ne(pd.Timedelta(hours=1)).cumsum().values
+            for _, segment in node_df.groupby("_window_segment", sort=False):
+                self._build_node_windows(segment)
             
     def _build_node_windows(self, node_df: pd.DataFrame) -> None:
         """Build sliding windows for a single node."""

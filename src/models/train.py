@@ -60,7 +60,7 @@ class Trainer:
         self.criterion = nn.HuberLoss()
         self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', factor=0.5, patience=5, verbose=True
+            self.optimizer, mode='min', factor=0.5, patience=5
         )
         
         # Mixed precision

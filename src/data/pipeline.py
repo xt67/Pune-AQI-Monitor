@@ -90,13 +90,8 @@ def run_preprocess_pipeline(
     logger.info("Step 1: Cleaning data...")
     df = preprocess.clean_aqi_data(df)
     
-    # Step 2: Clip outliers
-    logger.info("Step 2: Clipping outliers...")
-    pollutant_cols = ["pm25", "pm10", "no2", "so2", "co", "o3"]
-    pollutant_cols = [c for c in pollutant_cols if c in df.columns]
-    if pollutant_cols:
-        df = preprocess.clip_outliers(df, columns=pollutant_cols)
-    
+    # Preserve observed extremes; do not estimate clipping thresholds on future data.
+
     # Step 3: Compute AQI if not present
     if "aqi" not in df.columns and "pm25" in df.columns:
         logger.info("Step 3: Computing AQI...")

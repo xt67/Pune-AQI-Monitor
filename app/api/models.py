@@ -1,5 +1,5 @@
 """Pydantic models for API request/response schemas."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -10,7 +10,7 @@ class HealthResponse(BaseModel):
     status: str = Field(..., example="healthy")
     version: str = Field(..., example="1.0.0")
     models_loaded: bool = Field(..., example=True)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class StationInfo(BaseModel):
@@ -32,13 +32,15 @@ class StationsResponse(BaseModel):
 class PredictionRequest(BaseModel):
     """Request for AQI prediction."""
     station_id: str = Field(..., example="MH020")
+    as_of: Optional[datetime] = Field(default=None, description="Explicit historical forecast origin; omit for fresh observations")
+    demo: bool = Field(default=False, description="Explicitly request simulated data, not a model forecast")
     model_type: str = Field(default="lstm", example="lstm", description="Model type: 'lstm' or 'arima'")
     horizon: int = Field(default=24, ge=1, le=72, example=24, description="Forecast horizon in hours")
 
 
 class HourlyPrediction(BaseModel):
     """Single hour prediction."""
-    hour: int = Field(..., ge=0, le=71)
+    hour: int = Field(..., ge=1, le=72)
     timestamp: datetime
     aqi: float = Field(..., ge=0, le=500)
     category: str = Field(..., example="Moderate")
@@ -48,10 +50,13 @@ class HourlyPrediction(BaseModel):
 class PredictionResponse(BaseModel):
     """AQI prediction response."""
     station_id: str
+    data_source: str = "simulated"
+    warning: str = "Simulated demonstration data; not a measured AQI or model forecast."
     model_type: str
     horizon: int
-    generated_at: datetime = Field(default_factory=datetime.utcnow)
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     predictions: List[HourlyPrediction]
+    forecast_origin: Optional[datetime] = None
     current_aqi: Optional[float] = None
     mae: Optional[float] = Field(None, description="Model's Mean Absolute Error on test set")
 
@@ -60,7 +65,7 @@ class ErrorResponse(BaseModel):
     """Error response."""
     detail: str
     code: str = Field(default="ERROR")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # AQI category mapping
@@ -77,6 +82,6 @@ AQI_CATEGORIES = [
 def get_aqi_category(aqi: float) -> tuple:
     """Get AQI category name and color."""
     for low, high, name, color in AQI_CATEGORIES:
-        if low <= aqi <= high:
+        if 0 <= aqi <= high:
             return name, color
     return "Severe", "#8F3F97"

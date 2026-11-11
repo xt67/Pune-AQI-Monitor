@@ -1,19 +1,8 @@
-# Streamlit Cloud deployment requirements
-# For full development, install: pip install torch torchvision torch-geometric pmdarima pytest
-
-# Core
-numpy>=1.24.0
-pandas>=2.0.0
-
-# Visualization
-matplotlib>=3.8.0
-seaborn>=0.13.0
-plotly>=5.18.0
-folium>=0.15.0
-
-# Web application
-streamlit>=1.29.0
-streamlit-folium>=0.17.0
-
-# Utilities
-branca>=0.6.0
+# Python 3.11; API-driven dashboard and service (no model downloads required)
+numpy==1.26.4
+pandas==2.3.3
+pyarrow==19.0.1
+streamlit==1.67.0
+httpx==0.28.1
+fastapi==0.162.4
+uvicorn==0.54.0

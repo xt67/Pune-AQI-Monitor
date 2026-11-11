@@ -154,4 +154,28 @@ Pune-AQI-Monitor/
 │   ├── data/                # Data collection and preprocessing
 │   ├── models/              # Forecasting models
 │   ├── evaluate/             # Model evaluation
-│  
+│   └── viz/                 # Visualisation utilities
+│
+├── tests/                   # Automated tests
+├── requirements.txt
+├── requirements-dev.txt
+└── README.md
+```
+
+## Important Notes
+
+- Live air quality values are external forecast estimates, not measurements from locally deployed sensors.
+- The live application uses the US EPA AQI standard, not the Indian CPCB AQI standard.
+- CAMS global forecast data has approximately 45 km spatial resolution. Nearby locations may therefore share similar readings.
+- Live monitoring is independent of the experimental machine learning models.
+- This project is intended for educational and research purposes, not as a certified environmental monitoring or health advisory service.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+## Author
+
+**Rayan Rahman**
+
+GitHub: [@xt67](https://github.com/xt67)
